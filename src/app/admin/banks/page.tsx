@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 
 interface Bank {
@@ -16,10 +16,14 @@ export default function AdminBanksPage() {
   const [banks, setBanks] = useState<Bank[]>([])
   const [loading, setLoading] = useState(true)
   const [showUpload, setShowUpload] = useState(false)
-  const [form, setForm] = useState({ name: '', description: '', pdfText: '' })
+  const [form, setForm] = useState({ name: '', description: '', rawText: '' })
   const [parsing, setParsing] = useState(false)
+  const [extracting, setExtracting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const [uploadedFileName, setUploadedFileName] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadBanks() }, [])
 
@@ -31,12 +35,101 @@ export default function AdminBanksPage() {
     setLoading(false)
   }
 
+  async function extractTextFromFile(file: File): Promise<string> {
+    const name = file.name.toLowerCase()
+
+    if (name.endsWith('.txt')) {
+      return await file.text()
+    }
+
+    if (name.endsWith('.docx')) {
+      const mammoth = await import('mammoth')
+      const arrayBuffer = await file.arrayBuffer()
+      const result = await mammoth.extractRawText({ arrayBuffer })
+      if (result.messages.length > 0) {
+        console.warn('DOCX 解析警告:', result.messages)
+      }
+      return result.value || ''
+    }
+
+    if (name.endsWith('.pdf')) {
+      const pdfjsLib = await import('pdfjs-dist')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+      const arrayBuffer = await file.arrayBuffer()
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer })
+      const pdf = await loadingTask.promise
+      let text = ''
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
+        const content = await page.getTextContent()
+        const pageText = content.items.map((item: any) => item.str).join(' ')
+        text += pageText + '\n'
+      }
+      return text.trim()
+    }
+
+    throw new Error('不支持的文件格式，请上传 PDF、DOCX 或 TXT 文件')
+  }
+
+  async function handleFile(file: File) {
+    if (!file) return
+    const validTypes = ['.pdf', '.docx', '.txt']
+    const ext = '.' + file.name.split('.').pop()?.toLowerCase()
+    if (!validTypes.includes(ext)) {
+      setError('不支持的文件格式，请上传 PDF、DOCX 或 TXT 文件')
+      return
+    }
+    setError('')
+    setExtracting(true)
+    setUploadedFileName(file.name)
+    try {
+      const text = await extractTextFromFile(file)
+      if (!text.trim()) {
+        setError('未能从文件中提取到文本内容，该文件可能为图片扫描件或空文件')
+        setUploadedFileName('')
+      } else {
+        setForm(f => ({ ...f, rawText: text }))
+      }
+    } catch (err: any) {
+      setError(`文件解析失败: ${err.message || '未知错误'}`)
+      setUploadedFileName('')
+    }
+    setExtracting(false)
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) handleFile(file)
+    if (e.target) e.target.value = ''
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleFile(file)
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(true)
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+  }
+
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setSuccess('')
-    if (!form.name.trim() || !form.pdfText.trim()) {
-      setError('题库名称和PDF文本内容不能为空')
+    if (!form.name.trim()) {
+      setError('请填写题库名称')
+      return
+    }
+    if (!form.rawText.trim()) {
+      setError('请上传文件或粘贴题目文本内容')
       return
     }
     setParsing(true)
@@ -44,12 +137,13 @@ export default function AdminBanksPage() {
       const res = await fetch('/api/admin/banks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ name: form.name, description: form.description, pdfText: form.rawText }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error); return }
+      if (!res.ok) { setError(data.error); setParsing(false); return }
       setSuccess(`题库 "${data.bank.name}" 创建成功，共 ${data.bank.questionCount} 题`)
-      setForm({ name: '', description: '', pdfText: '' })
+      setForm({ name: '', description: '', rawText: '' })
+      setUploadedFileName('')
       setShowUpload(false)
       loadBanks()
     } catch (err: any) {
@@ -117,18 +211,63 @@ export default function AdminBanksPage() {
                 </div>
               </div>
 
+              {/* 文件上传区域 */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">PDF 文本内容 *</label>
-                <p className="text-xs text-gray-400 mb-2">
-                  💡 打开 PDF → 全选复制 (Ctrl+A, Ctrl+C) → 粘贴到下方。也可以用 PDF 转文本工具。
-                </p>
-                <textarea
-                  value={form.pdfText}
-                  onChange={e => setForm(f => ({ ...f, pdfText: e.target.value }))}
-                  className="w-full px-3 py-2 border rounded-lg text-sm font-mono text-gray-800 h-64 resize-y"
-                  placeholder="粘贴从 PDF 中复制的题目文本..."
-                  required
+                <label className="block text-xs text-gray-500 mb-1">上传题库文件 *</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt"
+                  onChange={handleFileInputChange}
+                  className="hidden"
                 />
+                <div
+                  onClick={() => !extracting && fileInputRef.current?.click()}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition ${
+                    dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-300 hover:border-gray-400'
+                  } ${extracting ? 'opacity-60 pointer-events-none' : ''}`}
+                >
+                  {extracting ? (
+                    <div className="text-gray-500">
+                      <p className="text-lg mb-1">⏳</p>
+                      <p className="text-sm">正在解析文件...</p>
+                      {uploadedFileName && <p className="text-xs text-gray-400 mt-1">{uploadedFileName}</p>}
+                    </div>
+                  ) : uploadedFileName && form.rawText ? (
+                    <div className="text-green-600">
+                      <p className="text-lg mb-1">✅</p>
+                      <p className="text-sm font-medium">{uploadedFileName}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        已提取 {form.rawText.length.toLocaleString()} 个字符 · 点击重新选择
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-gray-500">
+                      <p className="text-lg mb-1">📁</p>
+                      <p className="text-sm font-medium">点击选择文件 或拖拽文件到此处</p>
+                      <p className="text-xs text-gray-400 mt-1">支持 PDF、DOCX、TXT 格式</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 文本预览 / 手动编辑 */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  {form.rawText ? '已提取的文本（可手动编辑）' : '或直接粘贴文本'}
+                </label>
+                <textarea
+                  value={form.rawText}
+                  onChange={e => setForm(f => ({ ...f, rawText: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg text-sm font-mono text-gray-800 h-48 resize-y"
+                  placeholder="上传文件后自动显示提取的文本，或直接在此粘贴PDF/文档中的题目文本..."
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  💡 上传 PDF/DOCX 文件后文本会自动提取到此处，你也可以手动编辑后再提交
+                </p>
               </div>
 
               <div className="flex gap-2">
@@ -141,7 +280,7 @@ export default function AdminBanksPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowUpload(false); setError('') }}
+                  onClick={() => { setShowUpload(false); setError(''); setUploadedFileName(''); setForm({ name: '', description: '', rawText: '' }) }}
                   className="text-gray-500 px-4 py-2 text-sm"
                 >
                   取消
