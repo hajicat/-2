@@ -23,3 +23,7 @@ Thumbs.db
 
 # debug
 npm-debug.log*
+
+# local rules and logs
+AGENTS.md
+logs/
