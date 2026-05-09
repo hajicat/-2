@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 interface Bank {
@@ -9,6 +9,47 @@ interface Bank {
   description: string
   question_count: number
   created_at: string
+}
+
+interface Question {
+  type: string
+  stem: string
+  options: string[]
+  answer: string
+  explanation: string
+}
+
+const AI_SYSTEM_PROMPT = `你是一个专业的考试题目解析器。用户会发送题库文本内容，请从中提取所有题目并按以下JSON格式返回。
+你必须只返回纯JSON，不要任何额外文字，不要markdown代码块：
+
+{
+  "questions": [
+    {
+      "type": "single",
+      "stem": "题干文本，保留完整，不要截断",
+      "options": ["A. 选项内容", "B. 选项内容", "C. 选项内容", "D. 选项内容"],
+      "answer": "A",
+      "explanation": "解析说明，没有则留空字符串"
+    }
+  ]
+}
+
+规则：
+1. type: single=单选题, multi=多选题, judge=判断题, fill=填空题
+2. 单选 answer 填选项字母如 "A"，多选填如 "AC"
+3. 判断 answer 填 "对" 或 "错"，options 为空数组 []
+4. 填空 answer 填正确答案文本，options 为空数组 []
+5. 如果原文有解析就提取，没有则 explanation 留空字符串 ""
+6. stem 必须完整保留题干原文，不要截断
+7. 直接输出JSON，不要包在markdown代码块中`
+
+function cleanJsonResponse(text: string): string {
+  let cleaned = text.trim()
+  const jsonBlockMatch = cleaned.match(/\x60\x60\x60(?:json)?\s*\n?([\s\S]*?)\x60\x60\x60/)
+  if (jsonBlockMatch) {
+    cleaned = jsonBlockMatch[1].trim()
+  }
+  return cleaned
 }
 
 export default function AdminBanksPage() {
@@ -133,21 +174,80 @@ export default function AdminBanksPage() {
       return
     }
     setParsing(true)
+
+    // 限制文本长度
+    const maxLen = 40000
+    let textToSend = form.rawText.trim()
+    if (textToSend.length > maxLen) {
+      textToSend = textToSend.substring(0, maxLen)
+      setError(`题库内容过长（${form.rawText.length}字符），已自动截取前${maxLen}字符进行解析`)
+    }
+
     try {
-      const res = await fetch('/api/admin/banks', {
+      // 第一步：通过代理调用 DeepSeek API
+      const proxyRes = await fetch('/api/admin/ai-proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, description: form.description, pdfText: form.rawText }),
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: AI_SYSTEM_PROMPT },
+            { role: 'user', content: `请解析以下题目内容：\n\n${textToSend}` }
+          ],
+          temperature: 0.1,
+          max_tokens: 8192,
+        }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error); setParsing(false); return }
-      setSuccess(`题库 "${data.bank.name}" 创建成功，共 ${data.bank.questionCount} 题`)
+
+      const proxyData = await proxyRes.json()
+      if (!proxyRes.ok) {
+        setError(proxyData.error || 'AI 请求失败')
+        setParsing(false)
+        return
+      }
+
+      // 第二步：解析 AI 返回的 JSON
+      let parsed: { questions: Question[] }
+      try {
+        const cleaned = cleanJsonResponse(proxyData.content)
+        parsed = JSON.parse(cleaned)
+      } catch {
+        setError(`AI 返回格式无法解析，请重试。返回内容预览: ${proxyData.content.substring(0, 200)}`)
+        setParsing(false)
+        return
+      }
+
+      if (!parsed.questions || parsed.questions.length === 0) {
+        setError('AI 未能从文本中提取到题目，请检查内容格式或尝试缩短文本')
+        setParsing(false)
+        return
+      }
+
+      // 第三步：提交题目创建题库
+      const bankRes = await fetch('/api/admin/banks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name,
+          description: form.description,
+          questions: parsed.questions,
+        }),
+      })
+
+      const bankData = await bankRes.json()
+      if (!bankRes.ok) {
+        setError(bankData.error || '创建题库失败')
+        setParsing(false)
+        return
+      }
+
+      setSuccess(`题库 "${bankData.bank.name}" 创建成功，共 ${bankData.bank.questionCount} 题`)
       setForm({ name: '', description: '', rawText: '' })
       setUploadedFileName('')
       setShowUpload(false)
       loadBanks()
     } catch (err: any) {
-      setError(err.message)
+      setError(`请求失败: ${err.message || '网络错误，请检查网络连接后重试'}`)
     }
     setParsing(false)
   }

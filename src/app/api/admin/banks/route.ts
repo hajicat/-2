@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb, initDb } from '@/lib/db'
 import { requireAdmin } from '@/lib/auth'
-import { parsePdfWithAI } from '@/lib/ai'
 
 export const runtime = 'edge'
 
@@ -18,7 +17,7 @@ export async function GET() {
   return NextResponse.json({ banks: result.rows })
 }
 
-// 上传PDF → AI解析 → 创建题库
+// 创建题库（支持服务端AI解析或前端预解析的题目）
 export async function POST(req: NextRequest) {
   const admin = await requireAdmin()
   if (!admin) return NextResponse.json({ error: '无权限' }, { status: 403 })
@@ -26,34 +25,51 @@ export async function POST(req: NextRequest) {
   await initDb()
   const db = getDb()
 
-  const { name, description, pdfText } = await req.json()
+  const body = await req.json() as {
+    name: string
+    description?: string
+    pdfText?: string
+    questions?: Array<{
+      type: string
+      stem: string
+      options: string[]
+      answer: string
+      explanation: string
+    }>
+  }
+  const { name, description, pdfText, questions } = body
 
-  if (!name || !pdfText) {
-    return NextResponse.json({ error: '题库名称和PDF文本内容不能为空' }, { status: 400 })
+  if (!name) {
+    return NextResponse.json({ error: '题库名称不能为空' }, { status: 400 })
   }
 
-  // 调用 DeepSeek 解析
-  let parsed
-  try {
-    parsed = await parsePdfWithAI(pdfText)
-  } catch (err: any) {
-    return NextResponse.json({ error: `AI解析失败: ${err.message}` }, { status: 500 })
+  let finalQuestions = questions
+
+  // 如果没有预解析的题目且有文本内容，走服务端AI解析（兼容旧流程）
+  if (!finalQuestions && pdfText) {
+    try {
+      const { parsePdfWithAI } = await import('@/lib/ai')
+      const parsed = await parsePdfWithAI(pdfText)
+      finalQuestions = parsed.questions
+    } catch (err: any) {
+      return NextResponse.json({ error: `AI解析失败: ${err.message}` }, { status: 500 })
+    }
   }
 
-  if (!parsed.questions || parsed.questions.length === 0) {
-    return NextResponse.json({ error: '未能从PDF中提取到任何题目' }, { status: 400 })
+  if (!finalQuestions || finalQuestions.length === 0) {
+    return NextResponse.json({ error: '没有可用的题目数据' }, { status: 400 })
   }
 
   // 创建题库
   const bankResult = await db.execute({
     sql: 'INSERT INTO question_banks (name, description, question_count, created_by) VALUES (?, ?, ?, ?)',
-    args: [name, description || '', parsed.questions.length, admin.id]
+    args: [name, description || '', finalQuestions.length, admin.id]
   })
   const bankId = Number(bankResult.lastInsertRowid)
 
   // 批量插入题目
-  for (let i = 0; i < parsed.questions.length; i++) {
-    const q = parsed.questions[i]
+  for (let i = 0; i < finalQuestions.length; i++) {
+    const q = finalQuestions[i]
     await db.execute({
       sql: `INSERT INTO questions (bank_id, type, stem, options_json, answer, explanation, sort_order)
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -71,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    bank: { id: bankId, name, questionCount: parsed.questions.length }
+    bank: { id: bankId, name, questionCount: finalQuestions.length }
   })
 }
 
