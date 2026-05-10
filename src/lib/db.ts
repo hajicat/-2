@@ -102,4 +102,9 @@ async function doInit(): Promise<void> {
     })
     console.log('✅ 默认管理员已创建: admin / admin123')
   }
+
+  // 为旧表添加 difficulty 字段（如不存在）
+  try {
+    await db.execute("ALTER TABLE questions ADD COLUMN difficulty TEXT DEFAULT ''")
+  } catch { /* 字段已存在则忽略 */ }
 }

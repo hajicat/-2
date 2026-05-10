@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       options: string[]
       answer: string
       explanation: string
+      difficulty?: string
     }>
   }
   const { name, description, pdfText, questions } = body
@@ -71,8 +72,8 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < finalQuestions.length; i++) {
     const q = finalQuestions[i]
     await db.execute({
-      sql: `INSERT INTO questions (bank_id, type, stem, options_json, answer, explanation, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO questions (bank_id, type, stem, options_json, answer, explanation, difficulty, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         bankId,
         q.type || 'single',
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify(q.options || []),
         q.answer,
         q.explanation || '',
+        q.difficulty || '',
         i
       ]
     })

@@ -10,30 +10,39 @@ interface ParseResult {
   }>
 }
 
-const SYSTEM_PROMPT = `你是一个专业的考试题目解析器。用户会发送题库文本内容，请从中提取所有题目并按以下JSON格式返回。
+const SYSTEM_PROMPT = `你是一个专业的考试题目解析器。请从提供的题库文本中提取所有题目，严格按照以下 JSON 格式输出。
 
-你必须只返回纯JSON，不要任何额外文字，不要markdown代码块：
+你必须只返回纯 JSON，不要任何额外文字，不要用 markdown 代码块包裹：
 
 {
   "questions": [
     {
       "type": "single",
-      "stem": "题干文本，保留完整，不要截断",
-      "options": ["A. 选项内容", "B. 选项内容", "C. 选项内容", "D. 选项内容"],
+      "stem": "题干文本，必须完整保留，不能截断或缩写",
+      "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"],
       "answer": "A",
-      "explanation": "解析说明，没有则留空字符串"
+      "explanation": "解析说明，如果原文没有解析则填空字符串",
+      "difficulty": "易"
     }
   ]
 }
 
-规则：
-1. type: single=单选题, multi=多选题, judge=判断题, fill=填空题
-2. 单选 answer 填选项字母如 "A"，多选填如 "AC"
-3. 判断 answer 填 "对" 或 "错"，options 为空数组 []
-4. 填空 answer 填正确答案文本，options 为空数组 []
-5. 如果原文有解析就提取，没有则 explanation 留空字符串 ""
-6. stem 必须完整保留题干原文，不要截断
-7. 直接输出JSON，不要包在markdown代码块中`
+【题型规则】type 字段取以下值：
+- single: 单选题，只有一个正确答案。answer 填正确选项的字母如 "A"。options 是纯文本选项数组，不要加字母前缀（前端会自动加上 A. B. C. D.）。
+- multi: 多选题，有多个正确答案。answer 填所有正确选项的字母连在一起如 "AC" 或 "BCD"。options 同上。
+- judge: 判断题，只有对/错两种答案。options 为空数组 []。answer 必须填 "Y"（正确/对）或 "N"（错误/错）。
+- essay: 论述题/简答题/名词解释。options 为空数组 []。answer 填该题的参考答案或答题要点文本。
+
+【难度标记】difficulty 字段取以下值：
+- "易": 基础概念、定义类题目
+- "中": 需要理解、辨析的题目
+- "难": 需要综合分析、深入理解的高难度题目
+
+【核心规则】
+1. 如果原文有解析就提取，没有则 explanation 填空字符串 ""
+2. stem 必须完整保留题干原文，逐字还原
+3. options 数组不要加 "A. " "B. " 等前缀，只需纯选项文本
+4. 只输出 JSON，前面不要有任何解释性文字`
 
 const MAX_RETRIES = 3
 const MAX_TEXT_LENGTH = 60000

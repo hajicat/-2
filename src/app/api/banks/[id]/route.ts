@@ -31,7 +31,7 @@ export async function GET(
 
   // 所有题目
   const questions = await db.execute({
-    sql: 'SELECT id, type, stem, options_json, explanation, sort_order FROM questions WHERE bank_id = ? ORDER BY sort_order',
+    sql: 'SELECT id, type, stem, options_json, explanation, difficulty, sort_order FROM questions WHERE bank_id = ? ORDER BY sort_order',
     args: [bankId]
   })
 
