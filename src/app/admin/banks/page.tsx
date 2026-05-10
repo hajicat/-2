@@ -185,11 +185,11 @@ export default function AdminBanksPage() {
     }
     setParsing(true)
 
-    const maxLen = 40000
+    const maxLen = 25000
     let textToSend = form.rawText.trim()
     if (textToSend.length > maxLen) {
       textToSend = textToSend.substring(0, maxLen)
-      setError(`题库内容过长（${form.rawText.length}字符），已自动截取前${maxLen}字符进行解析`)
+      setError(`题库内容过长（${form.rawText.length}字符），自动截取前${maxLen}字符解析，建议分批上传`) 
     }
 
     try {
