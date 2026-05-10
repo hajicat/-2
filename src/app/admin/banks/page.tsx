@@ -201,7 +201,15 @@ export default function AdminBanksPage() {
 
       const proxyData = await proxyRes.json()
       if (!proxyRes.ok) {
-        setError(proxyData.error || 'AI 请求失败')
+        const errMsg = proxyData.error?.message || proxyData.error || `AI 请求失败 (${proxyRes.status})`
+        setError(errMsg)
+        setParsing(false)
+        return
+      }
+
+      const aiContent = proxyData.choices?.[0]?.message?.content
+      if (!aiContent) {
+        setError('AI 返回内容为空，请重试')
         setParsing(false)
         return
       }
@@ -209,10 +217,10 @@ export default function AdminBanksPage() {
       // 第二步：解析 AI 返回的 JSON
       let parsed: { questions: Question[] }
       try {
-        const cleaned = cleanJsonResponse(proxyData.content)
+        const cleaned = cleanJsonResponse(aiContent)
         parsed = JSON.parse(cleaned)
       } catch {
-        setError(`AI 返回格式无法解析，请重试。返回内容预览: ${proxyData.content.substring(0, 200)}`)
+        setError(`AI 返回格式无法解析，请重试。返回内容预览: ${aiContent.substring(0, 200)}`)
         setParsing(false)
         return
       }
