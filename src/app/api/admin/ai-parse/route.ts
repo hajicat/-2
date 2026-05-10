@@ -36,8 +36,8 @@ export async function POST(req: NextRequest) {
   })
   const jobId = Number(jobResult.lastInsertRowid)
 
-  const ctx = getRequestContext()
-  ctx.waitUntil(processJob(jobId, apiKey, body))
+  const requestContext = getRequestContext()
+  requestContext.ctx.waitUntil(processJob(jobId, apiKey, body))
 
   return NextResponse.json({ jobId })
 }
