@@ -175,7 +175,6 @@ export default function AdminBanksPage() {
     }
     setParsing(true)
 
-    // 限制文本长度
     const maxLen = 40000
     let textToSend = form.rawText.trim()
     if (textToSend.length > maxLen) {
@@ -184,12 +183,11 @@ export default function AdminBanksPage() {
     }
 
     try {
-      // 第一步：通过代理调用 DeepSeek API
-      const proxyRes = await fetch('/api/admin/ai-proxy', {
+      // 第一步：提交 AI 解析任务
+      const startRes = await fetch('/api/admin/ai-parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'deepseek-chat',
           messages: [
             { role: 'system', content: AI_SYSTEM_PROMPT },
             { role: 'user', content: `请解析以下题目内容：\n\n${textToSend}` }
@@ -199,22 +197,55 @@ export default function AdminBanksPage() {
         }),
       })
 
-      const proxyData = await proxyRes.json()
-      if (!proxyRes.ok) {
-        const errMsg = proxyData.error?.message || proxyData.error || `AI 请求失败 (${proxyRes.status})`
-        setError(errMsg)
+      if (!startRes.ok) {
+        const errData = await startRes.json().catch(() => ({ error: '提交任务失败' }))
+        setError(errData.error || '提交任务失败')
         setParsing(false)
         return
       }
 
-      const aiContent = proxyData.choices?.[0]?.message?.content
+      const { jobId } = await startRes.json()
+      if (!jobId) {
+        setError('未获取到任务编号')
+        setParsing(false)
+        return
+      }
+
+      // 第二步：轮询等待结果
+      let aiContent: string | null = null
+      let elapsed = 0
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 2000))
+        elapsed += 2
+        setError(`🤖 AI 解析中... (已等待 ${elapsed} 秒)`)
+
+        const pollRes = await fetch(`/api/admin/ai-parse?id=${jobId}`)
+        if (!pollRes.ok) {
+          const errData = await pollRes.json().catch(() => ({ error: '轮询失败' }))
+          setError(errData.error || '轮询失败')
+          setParsing(false)
+          return
+        }
+
+        const job = await pollRes.json()
+        if (job.status === 'failed') {
+          setError(`AI 解析失败: ${job.error || '未知错误'}`)
+          setParsing(false)
+          return
+        }
+        if (job.status === 'done') {
+          aiContent = job.result
+          break
+        }
+      }
+
       if (!aiContent) {
-        setError('AI 返回内容为空，请重试')
+        setError('AI 解析超时（2分钟），请尝试缩短题库内容后重试')
         setParsing(false)
         return
       }
 
-      // 第二步：解析 AI 返回的 JSON
+      // 第三步：解析 AI 返回的 JSON
       let parsed: { questions: Question[] }
       try {
         const cleaned = cleanJsonResponse(aiContent)
@@ -231,7 +262,7 @@ export default function AdminBanksPage() {
         return
       }
 
-      // 第三步：提交题目创建题库
+      // 第四步：提交题目创建题库
       const bankRes = await fetch('/api/admin/banks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

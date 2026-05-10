@@ -79,6 +79,16 @@ async function doInit(): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ai_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      result TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   // 确保存在默认管理员 admin/admin123
