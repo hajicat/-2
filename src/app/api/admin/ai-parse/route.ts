@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
 async function processJob(
   jobId: number,
   apiKey: string,
-  body: { messages: Array<{ role: string; content: string }>; temperature?: number; max_tokens?: number }
+  body: { messages?: Array<{ role: string; content: string }>; temperature?: number; max_tokens?: number }
 ) {
   try {
     const db = getDb()
