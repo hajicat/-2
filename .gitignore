@@ -24,6 +24,9 @@ Thumbs.db
 # debug
 npm-debug.log*
 
+# typescript
+tsconfig.tsbuildinfo
+
 # local rules and logs
 AGENTS.md
 logs/
